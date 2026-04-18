@@ -24,7 +24,8 @@ chat 経由で URL を渡されたときは [`url-ingest.md`](url-ingest.md) の
 ## 前提
 
 - Python 3.10+ と PyYAML が導入されていること
-- リポジトリ root に `kit/` があり、そこを作業起点とすること
+- `.faqkit/` を持つプロジェクト root を作業起点とすること
+  (`tools/faqkit.py` はそこから呼ぶ)
 - `source/` への書き込みはこのフック経由の変換結果 (Markdown / 画像)
   のみに限ること。既存 MD の直接編集は行わない。
 - `inbox/` は原則ユーザーの領域。このフックで inbox 側を書き換えない

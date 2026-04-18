@@ -964,7 +964,8 @@ def _load_dashboard_template(root: Path) -> str:
         if tpl.exists():
             return tpl.read_text(encoding="utf-8")
     raise FileNotFoundError(
-        "templates/dashboard.html.tmpl が見つかりません。kit/templates/ に配置してください。"
+        "templates/dashboard.html.tmpl が見つかりません。"
+        "プロジェクト root に templates/ ディレクトリを配置してください。"
     )
 
 

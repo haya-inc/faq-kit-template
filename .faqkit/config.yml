@@ -68,7 +68,7 @@ web:
   method_order: [fetch, browser_mcp]
   fetch:
     timeout_seconds: 30
-    user_agent: "faq-kit/0.1 (+https://github.com/haya-inc/faq-kit)"
+    user_agent: "faq-kit/0.1"
     follow_redirects: true
   browser_mcp:
     timeout_seconds: 60
