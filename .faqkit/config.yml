@@ -105,7 +105,7 @@ logs:
 # readme: README.md の自動更新挙動
 # ----------------------------------------------------------------------------
 readme:
-  # 同期フック (hooks/sync.md) の最後に README.md の source-index ブロックを
+  # 同期スキル (.claude/skills/sync/SKILL.md) の最後に README.md の source-index ブロックを
   # 自動更新するか。false ならブロックは更新されない (手動実行が必要)。
   auto_update: true
   # 失敗エントリ (status: failed) も README に載せるか。

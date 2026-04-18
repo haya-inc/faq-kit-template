@@ -18,8 +18,8 @@ cd my-faq
 ## 思想
 
 - **キットは契約だけを定める**: 入力の置き場 (`inbox/`)、出力の保管庫
-  (`source/`)、状態ファイル (`.faqkit/state.yml`)、同期フック
-  (`hooks/sync.md`) の 4 点で、エージェントの振る舞いを縛ります。
+  (`source/`)、状態ファイル (`.faqkit/state.yml`)、同期スキル
+  (`.claude/skills/sync/`) の 4 点で、エージェントの振る舞いを縛ります。
 - **エージェントはツールを自由に選ぶ**: PDF→MD に pandoc を使うか
   markitdown を使うか Claude 直読にするかは、エージェントの判断です。
   キットは何を使うべきかは指定しません。
@@ -37,9 +37,13 @@ my-faq/
 ├── README.md              ← このファイル (下部に source-index が自動更新で入る)
 ├── CLAUDE.md              ← エージェント運用規約 (常に参照)
 ├── AGENTS.md              ← 他のエージェント向け。CLAUDE.md へ誘導
-├── hooks/
-│   ├── sync.md            ← inbox → source への同期手順 (取り込みフック)
-│   └── url-ingest.md      ← 会話経由の URL を inbox に取り込むフック
+├── .claude/
+│   ├── skills/
+│   │   ├── sync/SKILL.md         ← inbox → source への同期スキル
+│   │   └── url-ingest/SKILL.md   ← 会話経由の URL を inbox に取り込むスキル
+│   └── commands/
+│       ├── sync.md                ← /sync slash command
+│       └── url-ingest.md          ← /url-ingest slash command
 ├── templates/
 │   └── dashboard.html.tmpl ← ダッシュボード生成用テンプレート
 ├── inbox/                 ← 原資料を置く場所 (サブフォルダ自由)
@@ -58,7 +62,7 @@ my-faq/
 
 - `inbox/` はユーザーが原資料を置く層。エージェントは chat 経由の
   URL を `inbox/web/<slug>.url` に自動生成する場合があります
-  (hooks/url-ingest.md を参照)。それ以外でエージェントが inbox を
+  (`url-ingest` スキルを参照)。それ以外でエージェントが inbox を
   書き換えることはありません。
 - `source/` は同期フックの結果として Markdown と切り出し画像を書き
   込む層。エージェントが回答を作るときに参照する「資料庫」で、
@@ -124,10 +128,11 @@ inbox/
 `.url` ファイルはテキストで、中に URL だけが書かれている想定です
 (Windows 互換でも、1 行 URL でも可)。
 
-### 2. 同期フックを走らせてもらう
+### 2. 同期スキルを走らせてもらう
 
 エージェントに「取り込んで」「同期して」などと依頼すると、以下が
-実行されます。詳しい手順は [`hooks/sync.md`](hooks/sync.md) を参照。
+実行されます (slash command なら `/sync`)。詳しい手順は
+[`.claude/skills/sync/SKILL.md`](.claude/skills/sync/SKILL.md) を参照。
 
 1. `python tools/faqkit.py scan --json` で差分を把握
 2. `added` / `modified` / `output_missing` / `failed_retained` を
@@ -141,7 +146,8 @@ inbox/
    生成 (サーバー不要、`file://` で開ける)
 
 URL を chat で渡して取り込みたいときは
-[`hooks/url-ingest.md`](hooks/url-ingest.md) の手順に乗ります。
+[`.claude/skills/url-ingest/SKILL.md`](.claude/skills/url-ingest/SKILL.md)
+の手順に乗ります (slash command なら `/url-ingest <URL>`)。
 agent が `inbox/web/<slug>.url` を生成したあとは通常の sync に合流
 します。
 
