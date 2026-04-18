@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <title>faq-kit dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  base href は faqkit.py のレンダリング時に project root への相対パスを
+  埋め込む (例: dashboard.output=".faqkit/dashboard.html" なら "../")。
+  これによりページ内すべての相対リンク (source/*, inbox/*, hooks/*, CLAUDE.md
+  など) が project root 基準で解決される。
+-->
+<base href="__FAQKIT_BASE_HREF__">
 <style>
   :root {
     --fg: #1a1a1a;
@@ -134,8 +141,8 @@
     <h2>使い方</h2>
     <p style="color:var(--fg-muted);font-size:13px;margin:0 0 8px;">
       プロジェクト root で実行します。詳しくは
-      <a href="../hooks/sync.md">hooks/sync.md</a> と
-      <a href="../CLAUDE.md">CLAUDE.md</a> を参照。
+      <a href="hooks/sync.md">hooks/sync.md</a> と
+      <a href="CLAUDE.md">CLAUDE.md</a> を参照。
     </p>
     <pre># 差分確認 (人間向け / JSON)
 python tools/faqkit.py scan

@@ -980,14 +980,36 @@ def _dashboard_signature(data: dict) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
-def render_dashboard(root: Path) -> tuple[str, str]:
-    """dashboard.html 全文と、生成時刻を除いた署名 (16 桁 hex) を返す。"""
+def _base_href_for(out_rel: str) -> str:
+    """ダッシュボード HTML の位置から project root を指す <base href>。
+
+    state.yml に載るパスは project root 相対。HTML の href に直接書くと、
+    ダッシュボード HTML が置かれたディレクトリから解決されてしまうため、
+    <base href> で親ディレクトリ階層分を遡って相対解決を root 起点に
+    固定する。
+
+    例:
+      ".faqkit/dashboard.html"    → "../"
+      "dashboard.html"            → "./"
+      "build/reports/dash.html"   → "../../"
+    """
+    parent_parts = Path(out_rel).parent.parts
+    return "../" * len(parent_parts) if parent_parts else "./"
+
+
+def render_dashboard(root: Path, out_rel: str = ".faqkit/dashboard.html") -> tuple[str, str]:
+    """dashboard.html 全文と、生成時刻を除いた署名 (16 桁 hex) を返す。
+
+    `out_rel` は dashboard HTML の出力位置 (project root 相対)。
+    <base href> の計算に使う。実ファイル書き込みは呼び出し側の責務。
+    """
     tpl = _load_dashboard_template(root)
     data = build_dashboard_data(root)
     sig = _dashboard_signature(data)
     # `</script>` 混入対策のみ。JSON をそのまま埋め込む。
     payload = json.dumps(data, ensure_ascii=False, indent=2).replace("</script>", "<\\/script>")
     html = tpl.replace("__FAQKIT_DATA__", payload)
+    html = html.replace("__FAQKIT_BASE_HREF__", _base_href_for(out_rel))
     # 署名を HTML の先頭コメントに書き込んで、次回の差分判定に使う。
     html = f"<!-- faqkit-sig: {sig} -->\n" + html
     return html, sig
@@ -1000,7 +1022,7 @@ def cmd_dashboard(root: Path, args: argparse.Namespace) -> int:
     out_path = (root / out_rel).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    html, sig = render_dashboard(root)
+    html, sig = render_dashboard(root, out_rel)
 
     # 冪等: 署名が同じなら書き換えない (生成時刻だけのためにファイルを
     # 差し替えて mtime を変えない)
