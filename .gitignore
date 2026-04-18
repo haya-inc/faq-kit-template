@@ -18,6 +18,6 @@ venv/
 
 # knowledge-kit 自動生成物 (状態 / ダッシュボード / ログ)
 .knowledgekit/state.yml
-.knowledgekit/dashboard.html
+dashboard.html
 .knowledgekit/logs/
 .git.broken*

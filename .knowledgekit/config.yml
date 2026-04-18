@@ -115,7 +115,7 @@ readme:
 # dashboard: 1 枚 HTML ダッシュボードの生成挙動
 #
 # `python tools/knowledgekit.py dashboard` で state.yml と config を元に
-# .knowledgekit/dashboard.html を生成します。外部サーバー不要、file:// で開く
+# dashboard.html を生成します。外部サーバー不要、file:// で開く
 # だけで高速起動する静的ページです。
 # ----------------------------------------------------------------------------
 dashboard:
@@ -124,5 +124,5 @@ dashboard:
   # 生成後にブラウザを自動で開くか。sync のたびにタブが増えるのを
   # 避けるため、既定は false。`dashboard --open` で都度開く想定。
   auto_open: false
-  # 出力先 (root 相対)。.knowledgekit/ 配下なら gitignore で扱いやすい。
-  output: .knowledgekit/dashboard.html
+  # 出力先 (root 相対)。ルート直下が既定。.gitignore には dashboard.html を含めている。
+  output: dashboard.html

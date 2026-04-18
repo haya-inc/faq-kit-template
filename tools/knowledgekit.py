@@ -117,7 +117,7 @@ DEFAULT_CONFIG: dict = {
     "dashboard": {
         "auto_generate": True,
         "auto_open": False,
-        "output": ".knowledgekit/dashboard.html",
+        "output": "dashboard.html",
     },
 }
 
@@ -147,6 +147,66 @@ def find_root(start: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# パス解決
+# ---------------------------------------------------------------------------
+
+def _resolve_repo_relative(
+    root: Path,
+    raw_path: str,
+    *,
+    label: str,
+    expected_dir: str,
+    must_exist: bool = False,
+) -> tuple[str, Path]:
+    """repo 相対パスを正規化し、期待ディレクトリ配下かを検証する。"""
+    value = raw_path.strip()
+    if not value:
+        raise ValueError(f"{label} が空です。")
+
+    rel_path = Path(value)
+    if rel_path.is_absolute():
+        raise ValueError(f"{label} はリポジトリ相対パスで指定してください: {raw_path}")
+
+    root_resolved = root.resolve()
+    candidate = (root_resolved / rel_path).resolve(strict=False)
+    try:
+        normalized = candidate.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError(f"{label} はリポジトリ外を指せません: {raw_path}") from exc
+
+    if not normalized.parts or normalized.parts[0] != expected_dir:
+        raise ValueError(f"{label} は `{expected_dir}/` 配下である必要があります: {raw_path}")
+
+    if must_exist:
+        if not candidate.exists():
+            raise ValueError(f"{label} が存在しません: {normalized.as_posix()}")
+        if not candidate.is_file():
+            raise ValueError(f"{label} はファイルである必要があります: {normalized.as_posix()}")
+
+    return normalized.as_posix(), candidate
+
+
+def _try_resolve_repo_relative(
+    root: Path,
+    raw_path: str,
+    *,
+    label: str,
+    expected_dir: str,
+    must_exist: bool = False,
+) -> tuple[str, Path] | None:
+    try:
+        return _resolve_repo_relative(
+            root,
+            raw_path,
+            label=label,
+            expected_dir=expected_dir,
+            must_exist=must_exist,
+        )
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # ハッシュと走査
 # ---------------------------------------------------------------------------
 
@@ -163,11 +223,18 @@ def sha256_of(path: Path, *, chunk: int = 1 << 20) -> str:
 
 def _matches_ignore(rel: Path, patterns: list[str]) -> bool:
     import fnmatch
+
     posix = rel.as_posix()
-    name = rel.name
+    candidates = {posix, rel.name}
+    if rel.parts and rel.parts[0] in {INBOX_DIRNAME, SOURCE_DIRNAME} and len(rel.parts) > 1:
+        subrel = Path(*rel.parts[1:]).as_posix()
+        candidates.add(subrel)
+        candidates.add(Path(subrel).name)
+
     for pat in patterns:
-        if fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(posix, pat):
-            return True
+        for candidate in candidates:
+            if fnmatch.fnmatch(candidate, pat):
+                return True
     return False
 
 
@@ -422,6 +489,7 @@ def scan(root: Path) -> dict:
     new: list[dict] = []
     modified: list[dict] = []
     unchanged: list[dict] = []
+    output_missing: list[dict] = []
     failed_retained: list[dict] = []
 
     for path in walk_files(root, INBOX_DIRNAME, ignore):
@@ -447,14 +515,34 @@ def scan(root: Path) -> dict:
             info["notes"] = prev.notes
             failed_retained.append(info)
         else:
-            info["output"] = prev.output
-            unchanged.append(info)
+            info["output"] = prev.output or info["suggested_output"]
+            resolved_output = (
+                _try_resolve_repo_relative(
+                    root,
+                    prev.output,
+                    label="output",
+                    expected_dir=SOURCE_DIRNAME,
+                )
+                if prev.output
+                else None
+            )
+            if prev.status == "ok" and (
+                resolved_output is None or not resolved_output[1].exists()
+            ):
+                output_missing.append(info)
+            else:
+                unchanged.append(info)
 
     # 孤立ソース: state にあるが inbox 実体が消えた
     orphan_sources = []
     for e in state.entries:
-        src_path = root / e.source
-        if not src_path.exists():
+        src_info = _try_resolve_repo_relative(
+            root,
+            e.source,
+            label="source",
+            expected_dir=INBOX_DIRNAME,
+        )
+        if src_info is None or not src_info[1].exists():
             orphan_sources.append({
                 "source": e.source,
                 "output": e.output,
@@ -462,7 +550,18 @@ def scan(root: Path) -> dict:
             })
 
     # 孤立 MD: state に載っていない MD が source/ にある
-    tracked_outputs = {e.output for e in state.entries if e.output}
+    tracked_outputs = set()
+    for e in state.entries:
+        if not e.output:
+            continue
+        out_info = _try_resolve_repo_relative(
+            root,
+            e.output,
+            label="output",
+            expected_dir=SOURCE_DIRNAME,
+        )
+        if out_info is not None:
+            tracked_outputs.add(out_info[0])
     orphan_outputs = []
     for path in walk_files(root, SOURCE_DIRNAME, ignore):
         if path.suffix.lower() != ".md":
@@ -476,14 +575,22 @@ def scan(root: Path) -> dict:
     for e in state.entries:
         if not e.output or not e.output_hash:
             continue
-        out_path = root / e.output
+        out_info = _try_resolve_repo_relative(
+            root,
+            e.output,
+            label="output",
+            expected_dir=SOURCE_DIRNAME,
+        )
+        if out_info is None:
+            continue
+        output_rel, out_path = out_info
         if not out_path.exists():
             continue
         current = sha256_of(out_path)
         if current != e.output_hash:
             tampered.append({
                 "source": e.source,
-                "output": e.output,
+                "output": output_rel,
                 "recorded_output_hash": e.output_hash,
                 "current_output_hash": current,
             })
@@ -494,6 +601,7 @@ def scan(root: Path) -> dict:
             "new": len(new),
             "modified": len(modified),
             "unchanged": len(unchanged),
+            "output_missing": len(output_missing),
             "failed_retained": len(failed_retained),
             "orphan_sources": len(orphan_sources),
             "orphan_outputs": len(orphan_outputs),
@@ -502,6 +610,7 @@ def scan(root: Path) -> dict:
         "new": new,
         "modified": modified,
         "unchanged": unchanged,
+        "output_missing": output_missing,
         "failed_retained": failed_retained,
         "orphan_sources": orphan_sources,
         "orphan_outputs": orphan_outputs,
@@ -515,6 +624,7 @@ def print_scan_human(report: dict) -> None:
     print(f"  新規            : {s['new']}")
     print(f"  更新             : {s['modified']}")
     print(f"  スキップ        : {s['unchanged']}")
+    print(f"  出力欠落        : {s['output_missing']}")
     print(f"  失敗残存        : {s['failed_retained']}")
     print(f"  孤立ソース      : {s['orphan_sources']}")
     print(f"  孤立 MD         : {s['orphan_outputs']}")
@@ -533,6 +643,7 @@ def print_scan_human(report: dict) -> None:
 
     _show("new", report["new"], ["source", "suggested_output"])
     _show("modified", report["modified"], ["source", "output", "previous_hash"])
+    _show("output_missing", report["output_missing"], ["source", "output"])
     _show("failed_retained", report["failed_retained"], ["source", "notes"])
     _show("orphan_sources", report["orphan_sources"], ["source", "output", "status"])
     _show("orphan_outputs", report["orphan_outputs"], ["output"])
@@ -546,10 +657,16 @@ def print_scan_human(report: dict) -> None:
 def cmd_record(root: Path, args: argparse.Namespace) -> int:
     state = load_state(root)
 
-    source_rel = Path(args.source).as_posix()
-    source_path = root / source_rel
-    if not source_path.exists():
-        sys.stderr.write(f"エラー: source が存在しません: {source_path}\n")
+    try:
+        source_rel, source_path = _resolve_repo_relative(
+            root,
+            args.source,
+            label="source",
+            expected_dir=INBOX_DIRNAME,
+            must_exist=True,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"エラー: {exc}\n")
         return 2
 
     entry = state.by_source().get(source_rel) or Entry(source=source_rel)
@@ -564,15 +681,40 @@ def cmd_record(root: Path, args: argparse.Namespace) -> int:
         if not args.output:
             sys.stderr.write("エラー: status=ok のとき --output が必須です。\n")
             return 2
-        output_rel = Path(args.output).as_posix()
-        output_path = root / output_rel
-        if not output_path.exists():
-            sys.stderr.write(f"エラー: output が存在しません: {output_path}\n")
+        try:
+            output_rel, output_path = _resolve_repo_relative(
+                root,
+                args.output,
+                label="output",
+                expected_dir=SOURCE_DIRNAME,
+                must_exist=True,
+            )
+        except ValueError as exc:
+            sys.stderr.write(f"エラー: {exc}\n")
             return 2
         entry.output = output_rel
         entry.output_hash = sha256_of(output_path)
     elif args.status == "failed":
-        entry.output = args.output or entry.output
+        if args.output:
+            try:
+                output_rel, _ = _resolve_repo_relative(
+                    root,
+                    args.output,
+                    label="output",
+                    expected_dir=SOURCE_DIRNAME,
+                )
+            except ValueError as exc:
+                sys.stderr.write(f"エラー: {exc}\n")
+                return 2
+            entry.output = output_rel
+        elif entry.output:
+            output_info = _try_resolve_repo_relative(
+                root,
+                entry.output,
+                label="output",
+                expected_dir=SOURCE_DIRNAME,
+            )
+            entry.output = output_info[0] if output_info is not None else ""
         entry.output_hash = ""
     else:
         sys.stderr.write("エラー: status は ok か failed のみです。\n")
@@ -608,6 +750,7 @@ def cmd_prune(root: Path, args: argparse.Namespace) -> int:
     report = scan(root)
     deleted_md: list[str] = []
     pruned_entries: list[str] = []
+    skipped_md: list[str] = []
 
     state = load_state(root)
 
@@ -619,14 +762,23 @@ def cmd_prune(root: Path, args: argparse.Namespace) -> int:
             if entry.source in orphan_sources:
                 # 対応 MD も削除
                 if entry.output:
-                    out_path = root / entry.output
-                    if out_path.exists() and out_path.is_file():
-                        if args.dry_run:
-                            deleted_md.append(entry.output)
-                        else:
-                            out_path.unlink()
-                            deleted_md.append(entry.output)
-                            _prune_empty_dirs(out_path.parent, root / SOURCE_DIRNAME)
+                    out_info = _try_resolve_repo_relative(
+                        root,
+                        entry.output,
+                        label="output",
+                        expected_dir=SOURCE_DIRNAME,
+                    )
+                    if out_info is None:
+                        skipped_md.append(entry.output)
+                    else:
+                        output_rel, out_path = out_info
+                        if out_path.exists() and out_path.is_file():
+                            if args.dry_run:
+                                deleted_md.append(output_rel)
+                            else:
+                                out_path.unlink()
+                                deleted_md.append(output_rel)
+                                _prune_empty_dirs(out_path.parent, root / SOURCE_DIRNAME)
                 pruned_entries.append(entry.source)
             else:
                 remaining.append(entry)
@@ -634,13 +786,22 @@ def cmd_prune(root: Path, args: argparse.Namespace) -> int:
 
     # B: source に MD あり state 未登録
     for item in report["orphan_outputs"]:
-        out_path = root / item["output"]
+        out_info = _try_resolve_repo_relative(
+            root,
+            item["output"],
+            label="output",
+            expected_dir=SOURCE_DIRNAME,
+        )
+        if out_info is None:
+            skipped_md.append(item["output"])
+            continue
+        output_rel, out_path = out_info
         if out_path.exists() and out_path.is_file():
             if args.dry_run:
-                deleted_md.append(item["output"])
+                deleted_md.append(output_rel)
             else:
                 out_path.unlink()
-                deleted_md.append(item["output"])
+                deleted_md.append(output_rel)
                 _prune_empty_dirs(out_path.parent, root / SOURCE_DIRNAME)
 
     if not args.dry_run:
@@ -651,6 +812,8 @@ def cmd_prune(root: Path, args: argparse.Namespace) -> int:
         print(f"  - {p}")
     for s in pruned_entries:
         print(f"  - state: {s}")
+    for p in skipped_md:
+        print(f"warning: 無効な output のため削除をスキップ: {p}", file=sys.stderr)
     return 0
 
 
@@ -676,10 +839,11 @@ def cmd_verify(root: Path, _args: argparse.Namespace) -> int:
     report = scan(root)
     s = report["summary"]
     drift = (
-        s["orphan_sources"]
+        s["output_missing"]
         + s["orphan_outputs"]
         + s["tampered_outputs"]
         + s["failed_retained"]
+        + s["orphan_sources"]
     )
     print_scan_human(report)
     if drift > 0:
@@ -766,9 +930,23 @@ def render_index(root: Path, *, include_failed: bool = True) -> str:
             lines.append(f"### {key}/")
             lines.append("")
             for e in sorted(groups[key], key=lambda x: x.source):
-                title = _read_md_title(root / e.output) or Path(e.source).stem
+                out_info = (
+                    _try_resolve_repo_relative(
+                        root,
+                        e.output,
+                        label="output",
+                        expected_dir=SOURCE_DIRNAME,
+                    )
+                    if e.output
+                    else None
+                )
+                title = _read_md_title(out_info[1]) if out_info else None
+                title = title or Path(e.source).stem
                 date = e.converted_at.split("T")[0] if e.converted_at else "?"
-                lines.append(f"- [{title}]({e.output})")
+                if out_info:
+                    lines.append(f"- [{title}]({out_info[0]})")
+                else:
+                    lines.append(f"- {title}")
                 lines.append(f"  - source: `{e.source}`")
                 lines.append(f"  - converted: {date} via `{e.converter or 'unknown'}`")
             lines.append("")
@@ -854,16 +1032,6 @@ def _dir_stats(root: Path, subdir: str, ignore: list[str]) -> tuple[int, int]:
     return count, total
 
 
-def _output_missing_entries(root: Path, state: State) -> list[Entry]:
-    missing = []
-    for e in state.entries:
-        if e.status != "ok" or not e.output:
-            continue
-        if not (root / e.output).exists():
-            missing.append(e)
-    return missing
-
-
 def build_dashboard_data(root: Path) -> dict:
     """dashboard.html に埋め込む JSON。"""
     config, config_warnings = effective_config(root)
@@ -874,7 +1042,6 @@ def build_dashboard_data(root: Path) -> dict:
 
     ok_entries = [e for e in state.entries if e.status == "ok"]
     failed_entries = [e for e in state.entries if e.status == "failed"]
-    missing_entries = _output_missing_entries(root, state)
 
     # source/ のファイル統計 (walk_files は MD 以外も拾うが、基本 MD のみ)
     source_count = 0
@@ -895,15 +1062,30 @@ def build_dashboard_data(root: Path) -> dict:
     for key, items in groups_raw.items():
         arr = []
         for e in sorted(items, key=lambda x: x.source):
-            src_path = root / e.source
+            src_info = _try_resolve_repo_relative(
+                root,
+                e.source,
+                label="source",
+                expected_dir=INBOX_DIRNAME,
+            )
+            out_info = (
+                _try_resolve_repo_relative(
+                    root,
+                    e.output,
+                    label="output",
+                    expected_dir=SOURCE_DIRNAME,
+                )
+                if e.output
+                else None
+            )
             try:
-                src_size = src_path.stat().st_size if src_path.exists() else 0
+                src_size = src_info[1].stat().st_size if src_info and src_info[1].exists() else 0
             except OSError:
                 src_size = 0
             arr.append({
-                "source": e.source,
-                "output": e.output,
-                "title": _read_md_title(root / e.output) if e.output else None,
+                "source": src_info[0] if src_info else e.source,
+                "output": out_info[0] if out_info else e.output,
+                "title": _read_md_title(out_info[1]) if out_info else None,
                 "converter": e.converter,
                 "converted_at": e.converted_at,
                 "source_hash": e.source_hash,
@@ -938,11 +1120,11 @@ def build_dashboard_data(root: Path) -> dict:
             "orphan_source": s["orphan_sources"],
             "orphan_output": s["orphan_outputs"],
             "modified_output": s["tampered_outputs"],
-            "output_missing": len(missing_entries),
+            "output_missing": s["output_missing"],
         },
         "warnings": {
             "failed": [{"source": e.source, "notes": e.notes} for e in failed_entries],
-            "output_missing": [e.output for e in missing_entries],
+            "output_missing": [x["output"] for x in report["output_missing"]],
             "orphan_source": [x["source"] for x in report["orphan_sources"]],
             "orphan_output": [x["output"] for x in report["orphan_outputs"]],
             "modified_output": [x["output"] for x in report["tampered_outputs"]],
@@ -989,15 +1171,15 @@ def _base_href_for(out_rel: str) -> str:
     固定する。
 
     例:
-      ".knowledgekit/dashboard.html"    → "../"
-      "dashboard.html"            → "./"
+      "dashboard.html"         → "./"
+      "nested/dash.html"       → "../"
       "build/reports/dash.html"   → "../../"
     """
     parent_parts = Path(out_rel).parent.parts
     return "../" * len(parent_parts) if parent_parts else "./"
 
 
-def render_dashboard(root: Path, out_rel: str = ".knowledgekit/dashboard.html") -> tuple[str, str]:
+def render_dashboard(root: Path, out_rel: str = "dashboard.html") -> tuple[str, str]:
     """dashboard.html 全文と、生成時刻を除いた署名 (16 桁 hex) を返す。
 
     `out_rel` は dashboard HTML の出力位置 (project root 相対)。
@@ -1008,8 +1190,8 @@ def render_dashboard(root: Path, out_rel: str = ".knowledgekit/dashboard.html") 
     sig = _dashboard_signature(data)
     # `</script>` 混入対策のみ。JSON をそのまま埋め込む。
     payload = json.dumps(data, ensure_ascii=False, indent=2).replace("</script>", "<\\/script>")
-    html = tpl.replace("__FAQKIT_DATA__", payload)
-    html = html.replace("__FAQKIT_BASE_HREF__", _base_href_for(out_rel))
+    html = tpl.replace("__KNOWLEDGEKIT_DATA__", payload)
+    html = html.replace("__KNOWLEDGEKIT_BASE_HREF__", _base_href_for(out_rel))
     # 署名を HTML の先頭コメントに書き込んで、次回の差分判定に使う。
     html = f"<!-- knowledgekit-sig: {sig} -->\n" + html
     return html, sig
@@ -1018,7 +1200,7 @@ def render_dashboard(root: Path, out_rel: str = ".knowledgekit/dashboard.html") 
 def cmd_dashboard(root: Path, args: argparse.Namespace) -> int:
     config, _ = effective_config(root)
     dash_cfg = config.get("dashboard", {}) or {}
-    out_rel = args.output or dash_cfg.get("output", ".knowledgekit/dashboard.html")
+    out_rel = args.output or dash_cfg.get("output", "dashboard.html")
     out_path = (root / out_rel).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 

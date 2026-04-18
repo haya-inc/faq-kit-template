@@ -6,11 +6,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!--
   base href は knowledgekit.py のレンダリング時に project root への相対パスを
-  埋め込む (例: dashboard.output=".knowledgekit/dashboard.html" なら "../")。
+  埋め込む (例: dashboard.output="dashboard.html" なら "./" (ルート直下がデフォルト))。
   これによりページ内すべての相対リンク (source/*, inbox/*, .claude/*,
   CLAUDE.md など) が project root 基準で解決される。
 -->
-<base href="__FAQKIT_BASE_HREF__">
+<base href="__KNOWLEDGEKIT_BASE_HREF__">
 <style>
   :root {
     --fg: #1a1a1a;
@@ -109,6 +109,53 @@
   .warn-row td { background: rgba(217,119,6,0.06); }
   .err-row td { background: rgba(220,38,38,0.06); }
 
+  .guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top: 8px; }
+  .step {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    position: relative;
+  }
+  .step .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .step h3 {
+    margin: 0 0 8px;
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .step p { margin: 0 0 8px; font-size: 13px; line-height: 1.65; }
+  .step ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--fg-muted); line-height: 1.7; }
+  .step ul li { margin: 2px 0; }
+  .step .ex {
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: rgba(37,99,235,0.06);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+    font-size: 12.5px;
+    color: var(--fg);
+  }
+  .step .ex .lbl { color: var(--fg-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 2px; }
+  @media (prefers-color-scheme: dark) {
+    .step .ex { background: rgba(96,165,250,0.1); }
+  }
+
   footer { color: var(--fg-muted); font-size: 11.5px; margin-top: 40px; text-align: center; }
 </style>
 </head>
@@ -139,25 +186,66 @@
 
   <section>
     <h2>使い方</h2>
-    <p style="color:var(--fg-muted);font-size:13px;margin:0 0 8px;">
-      プロジェクト root で実行します。詳しくは
-      <a href=".claude/skills/sync/SKILL.md">sync スキル</a> と
-      <a href="CLAUDE.md">CLAUDE.md</a> を参照。
+    <p style="color:var(--fg-muted);font-size:13px;margin:0 0 14px;">
+      この knowledge-kit は「資料を置く」「エージェントに同期してもらう」「質問する」の 3 ステップで動きます。
     </p>
-    <pre># 差分確認 (人間向け / JSON)
-python tools/knowledgekit.py scan
-python tools/knowledgekit.py scan --json
 
-# 変換結果を記録 (sync hook の中で実行)
-python tools/knowledgekit.py record --source inbox/... --output source/... --converter "pandoc@3.1"
+    <div class="guide">
+      <div class="step">
+        <h3><span class="num">1</span>資料を置く</h3>
+        <p>調べたい資料を <a href="inbox/"><code>inbox/</code></a> フォルダに入れます。フォルダ分けは自由で、そのままソースの章立てになります。</p>
+        <ul>
+          <li><b>文書:</b> PDF / Word / PowerPoint / テキスト / Markdown</li>
+          <li><b>画像:</b> PNG / JPEG / スクリーンショット (本文として OCR されます)</li>
+          <li><b>Web ページ:</b> <code>.url</code> ファイル、または URL を 1 行書いたテキスト</li>
+          <li><b>表:</b> Excel / CSV</li>
+        </ul>
+        <div class="ex">
+          <span class="lbl">例</span>
+          <code>inbox/製品マニュアル/取扱説明_v3.pdf</code><br>
+          <code>inbox/議事録/2026-04-10_キックオフ.docx</code><br>
+          <code>inbox/参考リンク/公式ドキュメント.url</code>
+        </div>
+      </div>
 
-# 孤立 MD の掃除 / 整合性検証
-python tools/knowledgekit.py prune
-python tools/knowledgekit.py verify
+      <div class="step">
+        <h3><span class="num">2</span>エージェントに同期を頼む</h3>
+        <p>資料を置いたらエージェントに「同期して」「sync して」と話しかけるだけで OK です。エージェントが自動で:</p>
+        <ul>
+          <li>置かれたファイルを読み取り、検索しやすい Markdown に変換</li>
+          <li>変換結果を <a href="source/"><code>source/</code></a> に保存し、索引を更新</li>
+          <li>このダッシュボードを最新状態に書き換え</li>
+        </ul>
+        <p style="margin-top:8px;">進捗や警告はこのページの上部カードで確認できます。<b>要 sync</b> バッジが出ているときは新しい資料が未取り込みです。</p>
+        <div class="ex">
+          <span class="lbl">エージェントへの伝え方</span>
+          「inbox に入れた資料を同期してください」<br>
+          「新しい PDF を追加したので取り込んで」
+        </div>
+      </div>
 
-# 索引とダッシュボードの更新
-python tools/knowledgekit.py update-readme
-python tools/knowledgekit.py dashboard --open</pre>
+      <div class="step">
+        <h3><span class="num">3</span>質問する</h3>
+        <p>取り込みが終わったら、普通に日本語で質問するだけで大丈夫です。エージェントは <code>source/</code> の内容を根拠として回答し、参照した箇所も示します。</p>
+        <ul>
+          <li><b>具体的に:</b> 「例外処理について」より「◯◯エラーが出たときの対応手順は？」</li>
+          <li><b>範囲を添える:</b> 「議事録の中で」「マニュアル v3 に書かれている」など出典を絞ると精度が上がります</li>
+          <li><b>一問ずつ:</b> 複数聞くより、回答を踏まえて深掘りする方が良い答えが返ります</li>
+        </ul>
+        <div class="ex">
+          <span class="lbl">良い質問の例</span>
+          「取扱説明 v3 にある、エラーコード E-14 の対処手順を教えて」<br>
+          「4 月 10 日のキックオフ議事録で決まったマイルストーンは？」<br>
+          「製品マニュアルで『保証』について書かれている箇所を引用して」
+        </div>
+      </div>
+    </div>
+
+    <p style="color:var(--fg-muted);font-size:12px;margin-top:14px;">
+      動きの裏側について知りたい場合は
+      <a href=".claude/skills/sync/SKILL.md">sync スキルの説明</a> と
+      <a href="CLAUDE.md">CLAUDE.md</a> を参照してください。
+    </p>
   </section>
 
   <details>
@@ -171,7 +259,7 @@ python tools/knowledgekit.py dashboard --open</pre>
   </footer>
 </div>
 
-<script id="knowledgekit-data" type="application/json">__FAQKIT_DATA__</script>
+<script id="knowledgekit-data" type="application/json">__KNOWLEDGEKIT_DATA__</script>
 <script>
 (() => {
   const raw = document.getElementById("knowledgekit-data").textContent;
